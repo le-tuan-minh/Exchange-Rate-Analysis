@@ -1,0 +1,422 @@
+---
+title: "Bài tập lớn Mô hình Tài chính Quốc tế"
+author: "Lê Tuấn Minh - 11224210"
+date: "2025-04-17"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+setwd("D:/Mô hình tài chính quốc tế")
+```
+TẢI THƯ VIỆN
+```{r}
+library(ggplot2)
+library(scales)  
+library(dplyr)
+library(readr)
+library(readxl)
+library(tidyr)
+library(psych)
+library(tseries)
+library(Metrics)
+library(urca)
+library(forecast)
+library(purrr)
+library(rugarch)
+library(FinTS)
+library(fGarch)
+```
+LOAD DỮ LIỆU
+```{r}
+tcqt <- read_xlsx("tcqt.xlsx")
+tcqt$Date = as.Date(tcqt$Date)
+cpi_data = read_xlsx("tcqt.xlsx", sheet = "CPI")
+```
+CÂU 1
+```{r,fig.width=12,fig.height=5}
+# Reshape to long format
+tcqt_long <- tcqt %>%
+  pivot_longer(cols = c(USD_VND, EUR_VND),
+               names_to = "Currency",
+               values_to = "ExchangeRate")
+ggplot(tcqt_long, aes(x = Date, y = ExchangeRate, color = Currency)) +
+  geom_line(linewidth = 1) +
+  scale_x_date(date_breaks = "3 months", date_labels = "%b %Y") +
+  labs(title = "Exchange Rates Over Time",
+       x = "Date",
+       y = "Exchange Rate (VND)",
+       color = "Currency") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+```{r}
+tcqt <- tcqt %>%
+  mutate(
+    rUSD_VND = 100 * log(USD_VND / lag(USD_VND)),
+    rEUR_VND = 100 * log(EUR_VND / lag(EUR_VND)),
+    rEUR_USD = 100 * log(EUR_USD / lag(EUR_USD))
+  )
+# Loại bỏ dòng có NA trong bất kỳ cột return nào
+tcqt_r <- tcqt %>%
+  select(Date, rUSD_VND, rEUR_VND)%>%
+  filter(!is.na(rUSD_VND), !is.na(rEUR_VND))
+
+```
+
+
+
+```{r}
+# Tính thống kê mô tả
+return_stats <- describe(tcqt_r[, c("rUSD_VND", "rEUR_VND")])
+
+# Làm tròn các giá trị tới 4 chữ số sau dấu thập phân
+return_stats_clean <- return_stats[, c("mean", "sd", "median", "min", "max", "skew", "kurtosis")] %>%
+  round(., 4)
+
+# Chuyển cột thành hàng (transpose)
+return_stats_transposed <- t(return_stats_clean)
+
+# Đổi tên hàng (sau khi chuyển cột thành hàng, tên sẽ là cột)
+colnames(return_stats_transposed) <- c("rUSD_VND", "rEUR_VND")
+
+# Hiển thị bảng
+return_stats_transposed
+```
+
+```{r}
+# Reshape sang dạng long
+tcqt_long_r <- tcqt_r %>%
+  select(Date, rUSD_VND, rEUR_VND) %>%
+  pivot_longer(cols = starts_with("r"), 
+               names_to = "Series", 
+               values_to = "LogReturn")
+
+# Vẽ biểu đồ density
+ggplot(tcqt_long_r, aes(x = LogReturn, color = Series)) +
+  geom_density(linewidth = 1) +
+  labs(title = "Density of Log Returns (in %)",
+       x = "Log Return (%)",
+       y = "Density",
+       color = "Currency Pair") +
+  theme_minimal()
+```
+```{r}
+jarque.bera.test(tcqt_r$rUSD_VND)
+jarque.bera.test(tcqt_r$rEUR_VND)
+```
+Câu 3:
+```{r eur-usd-diff-only, fig.width=12, fig.height=5}
+# Tính sai lệch tuyệt đối
+tcqt <- tcqt %>%
+  mutate(EUR_USD_cal = EUR_VND/USD_VND,
+          EUR_USD_diff = abs(EUR_USD - EUR_USD_cal))
+
+# Reshape dữ liệu tỷ giá để vẽ biểu đồ trên
+tcqt_long_compare <- tcqt %>%
+  select(Date, EUR_USD, EUR_USD_cal) %>%
+  pivot_longer(cols = c(EUR_USD, EUR_USD_cal),
+               names_to = "Type",
+               values_to = "Rate")
+# Vẽ biểu đồ sai lệch tuyệt đối
+ggplot(tcqt, aes(x = Date, y = EUR_USD_diff)) +
+  geom_line(color = "darkred", linewidth = 1) +
+  scale_x_date(date_breaks = "3 months", date_labels = "%b %Y") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+Câu 4:
+```{r}
+cor(cpi_data$CPI_VN, cpi_data$CPI_US)
+```
+```{r}
+cor(cpi_data$INF_VN[-1], cpi_data$INF_US[-1])
+```
+```{r}
+cor.test(cpi_data$CPI_VN, cpi_data$CPI_US)
+```
+```{r}
+cor.test(cpi_data$INF_VN[-1], cpi_data$INF_US[-1])
+```
+```{r}
+# Đổi dữ liệu từ wide sang long
+cpi_long <- pivot_longer(cpi_data, cols = c("CPI_VN", "CPI_US"),
+                         names_to = "Country", values_to = "CPI")
+
+# Vẽ biểu đồ CPI
+ggplot(cpi_long, aes(x = TIME_PERIOD, y = CPI, color = Country, group = Country)) +
+  geom_line(linewidth = 1.2) +
+  labs(title = "Chỉ số giá tiêu dùng (CPI) của Việt Nam và Mỹ",
+       x = "Thời gian (tháng)", y = "CPI", color = "Quốc gia") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+# Đổi dữ liệu từ wide sang long
+inf_long <- pivot_longer(cpi_data[-1,], cols = c("INF_VN", "INF_US"),
+                         names_to = "Country", values_to = "Inflation")
+
+# Vẽ biểu đồ lạm phát
+ggplot(inf_long, aes(x = TIME_PERIOD, y = Inflation, color = Country, group = Country)) +
+  geom_line(size = 1.2) +
+  labs(title = "Tỷ lệ lạm phát của Việt Nam và Mỹ",
+       x = "Thời gian (tháng)", y = "Tỷ lệ lạm phát", color = "Quốc gia") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+```{r}
+fx_monthly <- tcqt %>%
+  mutate(TIME_PERIOD = format(Date, "%Y-%m")) %>%
+  group_by(TIME_PERIOD) %>%
+  summarise(USD_VND = mean(USD_VND, na.rm = TRUE))  # trung bình tháng
+```
+
+```{r}
+# Gộp CPI với tỷ giá thực tế cuối tháng
+cpi_merged <- left_join(cpi_data, fx_monthly, by = "TIME_PERIOD")
+
+# Tính chênh lệch lạm phát theo PPP tương đối
+cpi_merged <- cpi_merged %>%
+  mutate(PPP_change = (INF_VN - INF_US)/100)
+```
+
+```{r}
+# Gán tỷ giá khởi điểm
+initial_rate <- cpi_merged$USD_VND[1]
+
+cpi_merged <- cpi_merged %>%
+  mutate(PPP_change = replace_na(PPP_change, 0)) %>%
+  mutate(PPP_rate = accumulate(PPP_change,
+                               ~ .x * (1 + .y),
+                               .init = initial_rate)[-1])
+```
+
+```{r}
+# Chuẩn bị dữ liệu dạng long để vẽ
+plot_data <- cpi_merged %>%
+  select(TIME_PERIOD, USD_VND, PPP_rate) %>%
+  pivot_longer(cols = c("USD_VND", "PPP_rate"),
+               names_to = "Type", values_to = "ExchangeRate")
+
+# Vẽ biểu đồ
+ggplot(plot_data, aes(x = TIME_PERIOD, y = ExchangeRate, color = Type, group = Type)) +
+  geom_line(size = 1.2) +
+  labs(
+       x = "Thời gian (tháng)", y = "Tỷ giá USD/VND",
+       color = "Loại tỷ giá") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+t.test(cpi_merged$USD_VND,cpi_merged$PPP_rate, paired = TRUE)
+```
+
+
+
+
+
+
+
+
+
+
+Câu 6
+```{r}
+summary(ur.df(tcqt$USD_VND, type = "trend",selectlags = "AIC"))
+```
+```{r}
+summary(ur.df(diff(tcqt$USD_VND), type = "trend",selectlags = "AIC"))
+```
+```{r}
+summary(ur.df(diff(tcqt$USD_VND), type = "drift",selectlags = "AIC"))
+```
+```{r}
+plot(diff(tcqt$USD_VND), type="l")
+```
+
+```{r}
+Acf(diff(tcqt$USD_VND))
+```
+```{r}
+Pacf(diff(tcqt$USD_VND))
+```
+```{r}
+arima313 = Arima(tcqt$USD_VND, order = c(3,1,3), include.constant = TRUE)
+summary(arima313)
+```
+```{r}
+autoplot(arima313)
+```
+```{r}
+checkresiduals(arima313)
+```
+```{r}
+plot(resid(arima313)^2)
+```
+
+```{r}
+Acf((resid(arima313))^2)
+```
+```{r}
+Pacf((resid(arima313))^2)
+```
+
+```{r}
+diff_USD_VND <- diff(tcqt$USD_VND)
+```
+
+```{r}
+jarque.bera.test(resid(arima313))
+```
+
+```{r}
+spec = ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),   
+  mean.model = list(armaOrder = c(3,3)),
+  distribution.model = "std"
+)
+model1 = ugarchfit(spec,diff_USD_VND)
+model1
+```
+```{r}
+# Trích xuất các tham số từ model1
+params <- coef(model1)
+
+# Xây dựng lại spec từ các tham số đã trích xuất mà không sử dụng 'garchInMean'
+spec_new <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
+  mean.model = list(armaOrder = c(3, 3), include.mean = TRUE),
+  distribution.model = "std",
+  fixed.pars = list(
+    mu = unname(params["mu"]),
+    ar1 = unname(params["ar1"]),
+    ar2 = unname(params["ar2"]),
+    ar3 = unname(params["ar3"]),
+    ma1 = unname(params["ma1"]),
+    ma2 = unname(params["ma2"]),
+    ma3 = unname(params["ma3"]),
+    omega = unname(params["omega"]),
+    alpha1 = unname(params["alpha1"]),
+    beta1 = unname(params["beta1"]),
+    shape = unname(params["shape"])
+  )
+)
+
+# Kiểm tra lại spec mới
+print(spec_new)
+```
+
+
+```{r}
+# Mô phỏng với tham số mới
+sim_result <- ugarchpath(
+  spec = spec_new,
+  n.sim = 10,
+  m.sim = 10000,
+  presigma = tail(sigma(model1), 3),
+  prereturns = tail(fitted(model1), 3),
+  preresiduals = tail(residuals(model1), 3),
+  rseed = 123,
+  data = diff_USD_VND
+)
+
+# Kiểm tra kết quả mô phỏng
+print(sim_result)
+```
+```{r}
+# Lấy các giá trị mô phỏng của diff_USD_VND
+simulated_values <- fitted(sim_result)
+
+# Tính tổng của diff_USD_VND trong 10 ngày cho mỗi kịch bản mô phỏng
+sum_of_simulations <- colSums(simulated_values)
+summary(sum_of_simulations)
+```
+
+
+```{r}
+# Nhân tổng với vị thế 10000
+profit_loss_simulations <- sum_of_simulations * 10000
+
+# In ra kết quả thống kê mô tả về lợi nhuận/thua lỗ
+summary(profit_loss_simulations)
+
+```
+
+```{r}
+# Tính toán VaR 95% (mức phân vị 5%)
+var_99 <- quantile(profit_loss_simulations, probs = 0.01)
+var_99
+```
+
+
+```{r}
+# Tạo dataframe cho ggplot2
+df_profit_loss <- data.frame(profit_loss = sort(profit_loss_simulations))
+df_profit_loss$cumulative_probability <- cumsum(rep(1/length(profit_loss_simulations), length(profit_loss_simulations)))
+
+# Vẽ biểu đồ mật độ với trục x được thu gọn
+plot_density_zoom <- ggplot(data.frame(profit_loss = profit_loss_simulations), aes(x = profit_loss)) +
+  geom_density(fill = "lightblue", alpha = 0.7) +
+  labs(
+       x = "Lợi nhuận/Thua lỗ (VND)",
+       y = "Mật độ") +
+  theme_minimal() +
+  # Thu gọn trục x
+  xlim(quantile(profit_loss_simulations, probs = 0.001), quantile(profit_loss_simulations, probs = 0.999)) + 
+  # Đánh dấu VaR 99%
+  geom_vline(xintercept = var_99, color = "red", linetype = "dashed") +
+  annotate("text", x = var_99, y = 0, label = paste("VaR 99% =", round(var_99, 0)), hjust = 0, vjust = 0, color = "red")
+
+print(plot_density_zoom)
+```
+```{r}
+# Giả sử 'sim_result' đã được tạo từ các bước mô phỏng trước
+# Lấy giá trị tỷ giá USD/VND cuối cùng từ dữ liệu thực tế làm giá trị ban đầu
+initial_usd_vnd <- last(tcqt$USD_VND)
+
+# Lấy các sai phân mô phỏng của diff_USD_VND
+simulated_diffs <- fitted(sim_result)
+
+# Tính tỷ giá USD/VND mô phỏng ở ngày thứ 10 cho mỗi kịch bản
+simulated_usd_vnd_final_day <- initial_usd_vnd + colSums(simulated_diffs)
+
+# Giá (K)
+strike_price <- 26000
+
+# Số lượng USD
+position_size <- 10000
+
+# Tính payoff của quyền chọn bán cho mỗi kịch bản
+put_option_payoff_per_usd <- pmax(strike_price - simulated_usd_vnd_final_day, 0)
+
+# Tính payoff của quyền chọn cho toàn bộ vị thế
+put_option_payoff_total <- put_option_payoff_per_usd * position_size
+
+# Tính giá của quyền chọn bán (giá trị trung bình của payoff)
+put_option_price <- mean(put_option_payoff_total)
+
+# In ra giá của quyền chọn bán
+cat("Giá của quyền chọn bán (cho vị thế 10000 USD):", put_option_price, "VND\n")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
